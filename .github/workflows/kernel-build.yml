@@ -1,4 +1,4 @@
-name: Build and Release Edgeble Kernel-6.1
+name: Build and Release Edgeble linux-6.1
 
 on:
   push:
@@ -8,80 +8,92 @@ on:
 jobs:
   build:
     permissions: write-all
-    name: Edgeble Kernel-6.1 runner
+    name: Edgeble linux-6.1 runner
     runs-on: self-hosted
+    env:
+      OS_VERSION: "v2.04"
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v1
+    - name: Clean runner workspace
+      run: |
+        sudo rm -rfv ${{ github.workspace }}/*
 
-      - name: Setup SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-        run: |
-          mkdir -p ~/.ssh/
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          echo "$SSH_PUBLIC_KEY" > ~/.ssh/id_rsa.pub
-          echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa.pub
-          chmod 600 ~/.ssh/known_hosts
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-          # Configure SSH to use this key for GitLab
-          echo -e "Host gitlab.com\n\tIdentityFile ~/.ssh/id_rsa\n" >> ~/.ssh/config
+    - name: Clone linux
+      run: git clone git@gitlab.edgeble.ai:core/kernel-6.1.git
 
-          # Test the SSH connection (optional)
-          ssh -T git@gitlab.com || echo "SSH connection test failed, but continuing..."
+    - name: Copy runner.config
+      run: cp .github/workflows/runner.config kernel-6.1/arch/arm64/configs/runner.config
 
-      - name: Clone Kernel
-        run: git clone -b linux-6.1-stan-rkr1 git@gitlab.com:edgeble/core/kernel-6.1.git
+    - name: Compile
+      run: |
+        cd kernel-6.1
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        ARCH=arm64 make rockchip_linux_defconfig gpu.config edgeble-6tops.config runner.config
+        mkdir -p ${{ github.workspace }}/out
+        mkdir -p ${{ github.workspace }}/out/linux-6.1
+        mkdir -p ${{ github.workspace }}/out/dtb/rockchip
+        mkdir -p ${{ github.workspace }}/out/modules-6.1
+        ARCH=arm64 make dtbs Image -j 16; ARCH=arm64 make modules -j 16; ARCH=arm64 make modules_install INSTALL_MOD_PATH=${{ github.workspace }}/out
 
-      - name: Copy runner.config
-        run: cp .github/workflows/runner.config kernel-6.1/arch/arm64/configs/runner.config
+    - name: Copy deb files and create archive
+      run: |
+        echo "Copy DTB:"
+        cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-edgeble-*.dtb ${{ github.workspace }}/out/dtb/rockchip
+        cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-edgeble-*.dtbo ${{ github.workspace }}/out/dtb/rockchip
+        cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-rock-5b.dtb ${{ github.workspace }}/out/dtb/rockchip
+        cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-rock-5b-radxa-camera-4k.dtbo ${{ github.workspace }}/out/dtb/rockchip
+        cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-firefly-itx*.dtb ${{ github.workspace }}/out/dtb/rockchip
 
-      - name: Compile
-        run: |
-          cd kernel-6.1
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          ARCH=arm64 make rockchip_linux_defconfig gpu.config edgeble-6tops.config runner.config
-          mkdir -p ${{ github.workspace }}/out
-          mkdir -p ${{ github.workspace }}/out/linux-6.1
-          mkdir -p ${{ github.workspace }}/out/dtb/rockchip
-          mkdir -p ${{ github.workspace }}/out/modules-6.1
-          ARCH=arm64 make dtbs Image -j 16; ARCH=arm64 make modules -j 16; ARCH=arm64 make modules_install INSTALL_MOD_PATH=${{ github.workspace }}/out
+        echo "Copy config:"
+        cp -fv ${{ github.workspace }}/kernel-6.1/.config ${{ github.workspace }}/out/linux-6.1
 
-      - name: Copy deb files and create archive
-        run: |
-          echo "Copy DTB:"
-          cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-edgeble-*.dtb ${{ github.workspace }}/out/dtb/rockchip
-          cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-edgeble-*.dtbo ${{ github.workspace }}/out/dtb/rockchip
-          cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-rock-5b.dtb ${{ github.workspace }}/out/dtb/rockchip
-          cp -fv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/dts/rockchip/rk3588-firefly-itx*.dtb ${{ github.workspace }}/out/dtb/rockchip
+        echo "Create linux-6.1:"
+        cp -frv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/Image ${{ github.workspace }}/out/dtb ${{ github.workspace }}/out/linux-6.1
 
-          echo "Copy config:"
-          cp -fv ${{ github.workspace }}/kernel-6.1/.config ${{ github.workspace }}/out/linux-6.1
+        echo "Create modules-6.1:"
+        cp -frv ${{ github.workspace }}/out/lib/modules/* ${{ github.workspace }}/out/modules-6.1
 
-          echo "Create linux-6.1:"
-          cp -frv ${{ github.workspace }}/kernel-6.1/arch/arm64/boot/Image ${{ github.workspace }}/out/dtb ${{ github.workspace }}/out/linux-6.1
+        echo "Create tar.xz"
+        cd ${{ github.workspace }}/out/
+        tar -Jcf linux-6.1.tar.xz linux-6.1 && tar -Jcf modules-6.1.tar.xz modules-6.1
 
-          echo "Create modules-6.1:"
-          cp -frv ${{ github.workspace }}/out/lib/modules/* ${{ github.workspace }}/out/modules-6.1
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: "${{ env.OS_VERSION }}"
+        body: |
+          - Add tower-light
+          - Add IMX415 RPi Wave
+          - Add Radxa IMX415
+        files: |
+          ${{ github.workspace }}/out/linux-6.1.tar.xz
+          ${{ github.workspace }}/out/modules-6.1.tar.xz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          echo "Create tar.xz"
-          cd ${{ github.workspace }}/out/
-          tar -Jcf linux-6.1.tar.xz linux-6.1 && tar -Jcf modules-6.1.tar.xz modules-6.1
+    - name: Send email notification on build result
+      if: always()  # ensures email gets sent on success or failure
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.SMTP_USERNAME }}
+        password: ${{ secrets.SMTP_PASSWORD }}
+        subject: |
+          [Edgeble linux-6.1.43 ${{ env.OS_VERSION }} Build] ${{ job.status }} – ${{ github.workflow }} @ ${{ github.run_number }}
+        body: |
+          GitHub Action: ${{ github.workflow }}
+          Release: https://github.com/${{ github.repository }}/releases/tag/${{ env.OS_VERSION }}
+          Run Number: ${{ github.run_number }}
+          Status: ${{ job.status }}
+          Commit: ${{ github.sha }}
+          Repo: ${{ github.repository }}
+          Triggered by: ${{ github.actor }}
+          Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: "v2.03"
-          body: |
-            - Add tower-light
-            - Add IMX415 RPi Wave
-          files: |
-            ${{ github.workspace }}/out/linux-6.1.tar.xz
-            ${{ github.workspace }}/out/modules-6.1.tar.xz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        from: ${{ secrets.EMAIL_FROM }}
+        bcc: ${{ secrets.EMAIL_TO }}
+        secure: false
