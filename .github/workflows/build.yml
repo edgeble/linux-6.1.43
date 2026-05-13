@@ -11,7 +11,7 @@ jobs:
     name: Edgeble linux-6.1 runner
     runs-on: self-hosted
     env:
-      OS_VERSION: "v2.06"
+      OS_VERSION: "v2.07"
 
     steps:
     - name: Clean runner workspace
@@ -65,7 +65,7 @@ jobs:
       with:
         tag_name: "${{ env.OS_VERSION }}"
         body: |
-          - RPi IMX415 Fix
+          - GMSL2 IMX415 Support
         files: |
           ${{ github.workspace }}/out/linux-6.1.tar.xz
           ${{ github.workspace }}/out/modules-6.1.tar.xz
